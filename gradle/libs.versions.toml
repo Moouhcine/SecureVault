@@ -1,19 +1,18 @@
 [versions]
 agp = "9.1.0"
-appcompat = "1.6.1"
-coreKtx = "1.10.1"
+appcompat = "1.7.1"
+coreKtx = "1.18.0"
 junit = "4.13.2"
-junitVersion = "1.1.5"
-androidxTestRules = "1.5.0"
-espressoCore = "3.5.1"
-lifecycleRuntimeKtx = "2.6.1"
-activityCompose = "1.8.0"
+junitVersion = "1.3.0"
+androidxTestRules = "1.7.0"
+espressoCore = "3.7.0"
+lifecycleRuntimeKtx = "2.10.0"
+activityCompose = "1.13.0"
 biometric = "1.2.0-alpha05"
-securityCrypto = "1.1.0-alpha06"
-playIntegrity = "1.4.0"
-kotlin = "2.2.10"
-composeBom = "2026.02.01"
-documentFile = "1.0.1"
+securityCrypto = "1.1.0"
+playIntegrity = "1.6.0"
+kotlin = "2.3.20"
+composeBom = "2026.03.01"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,7 +34,6 @@ androidx-biometric = { group = "androidx.biometric", name = "biometric", version
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 play-integrity = { group = "com.google.android.play", name = "integrity", version.ref = "playIntegrity" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
-androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentFile" }
 androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 

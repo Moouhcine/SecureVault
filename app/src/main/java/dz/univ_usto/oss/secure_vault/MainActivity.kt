@@ -2,16 +2,12 @@ package dz.univ_usto.oss.secure_vault
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -21,12 +17,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,27 +29,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalTextToolbar
-import androidx.compose.ui.platform.TextToolbar
-import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
-import androidx.documentfile.provider.DocumentFile
 import dz.univ_usto.oss.secure_vault.security.BiometricCryptoManager
 import dz.univ_usto.oss.secure_vault.security.CrashReporter
-import dz.univ_usto.oss.secure_vault.security.DocumentManager
 import dz.univ_usto.oss.secure_vault.security.IntegrityChecker
 import dz.univ_usto.oss.secure_vault.security.PasswordGenerator
 import dz.univ_usto.oss.secure_vault.security.SecurityEnvironmentChecker
 import dz.univ_usto.oss.secure_vault.security.VaultManager
 import dz.univ_usto.oss.secure_vault.ui.theme.SecureVaultTheme
+import javax.crypto.Cipher
 
 class MainActivity : AppCompatActivity() {
 
@@ -68,11 +57,7 @@ class MainActivity : AppCompatActivity() {
     private var crashReport by mutableStateOf<String?>(null)
     private var isClearingClipboard = false
 
-    private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
-        clearClipboard()
-    }
-
-    private val allowedAuthenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
+    private val allowedAuthenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,6 +66,8 @@ class MainActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
         )
+        // Protection against Tapjacking (Overlays)
+        findViewById<View>(android.R.id.content).filterTouchesWhenObscured = true
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
 
         CrashReporter.init(this)
@@ -88,172 +75,74 @@ class MainActivity : AppCompatActivity() {
 
         vaultManager = try {
             VaultManager(this)
-        } catch (e: Exception) {
-            crashReport = "Vault init failed:\n${e.stackTraceToString()}"
+        } catch (_: Exception) {
             null
         }
 
-        try {
-            if (!SecurityEnvironmentChecker.isEnvironmentSafe(this)) {
-                isEnvironmentCompromised = true
-                isUnlocked = false
-            }
-        } catch (_: Exception) {
-            isEnvironmentCompromised = true
-            isUnlocked = false
-        }
-
-        isBiometricAvailable = try {
-            val biometricStatus = BiometricManager.from(this).canAuthenticate(allowedAuthenticators)
-            biometricStatus == BiometricManager.BIOMETRIC_SUCCESS
-        } catch (_: Exception) {
-            false
-        }
-
-        if (IntegrityChecker.isIntegrityEnforced(this)) {
-            IntegrityChecker.requestIntegrityToken(
-                context = this,
-                onSuccess = {
-                    isIntegrityChecked = true
-                    integrityCheckFailed = false
-                },
-                onFailure = {
-                    isIntegrityChecked = true
-                    integrityCheckFailed = true
-                    isUnlocked = false
-                }
-            )
-        } else {
-            isIntegrityChecked = true
-            integrityCheckFailed = false
-        }
+        checkSecurity()
 
         enableEdgeToEdge()
         setContent {
-            CompositionLocalProvider(LocalTextToolbar provides NoTextToolbar) {
-                SecureVaultTheme {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colorScheme.background
-                    ) {
-                        when {
-                            crashReport != null -> CrashReportScreen(
-                                report = crashReport.orEmpty(),
-                                onDismiss = {
-                                    CrashReporter.clearReport(this@MainActivity)
-                                    crashReport = null
-                                }
-                            )
-                            isEnvironmentCompromised || integrityCheckFailed -> CompromisedScreen()
-                            !isIntegrityChecked -> IntegrityCheckScreen()
-                            !isBiometricAvailable -> BiometricUnavailableScreen()
-                            !isUnlocked -> LockedScreen(onAuthenticate = { showBiometricPrompt() })
-                            else -> {
-                                val manager = vaultManager
-                                if (manager != null) {
-                                    VaultHome(manager)
-                                } else {
-                                    CrashReportScreen(
-                                        report = crashReport.orEmpty(),
-                                        onDismiss = {
-                                            CrashReporter.clearReport(this@MainActivity)
-                                            crashReport = null
-                                        }
-                                    )
-                                }
-                            }
-                        }
+            SecureVaultTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    when {
+                        crashReport != null -> CrashReportScreen(report = crashReport!!, onDismiss = { CrashReporter.clearReport(this); crashReport = null })
+                        isEnvironmentCompromised || integrityCheckFailed -> CompromisedScreen()
+                        !isIntegrityChecked -> IntegrityCheckScreen()
+                        !isBiometricAvailable -> BiometricUnavailableScreen()
+                        !isUnlocked -> LockedScreen(onAuthenticate = { authenticateMain() })
+                        else -> VaultHome(vaultManager!!)
                     }
                 }
             }
         }
     }
 
-    override fun onStart() {
-        super.onStart()
-        getSystemService<ClipboardManager>()?.addPrimaryClipChangedListener(clipboardListener)
-        clearClipboard()
+    private fun checkSecurity() {
+        isEnvironmentCompromised = !SecurityEnvironmentChecker.isEnvironmentSafe(this)
+        isBiometricAvailable = BiometricManager.from(this).canAuthenticate(allowedAuthenticators) == BiometricManager.BIOMETRIC_SUCCESS
+        
+        if (IntegrityChecker.isIntegrityEnforced(this)) {
+            IntegrityChecker.requestIntegrityToken(this, { isIntegrityChecked = true; integrityCheckFailed = false }, { isIntegrityChecked = true; integrityCheckFailed = true })
+        } else {
+            isIntegrityChecked = true
+        }
     }
 
-    override fun onStop() {
-        getSystemService<ClipboardManager>()?.removePrimaryClipChangedListener(clipboardListener)
-        super.onStop()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        try {
-            if (!SecurityEnvironmentChecker.isEnvironmentSafe(this)) {
-                isEnvironmentCompromised = true
-                isUnlocked = false
+    private fun authenticateMain() {
+        showBiometricPrompt("Unlock Vault", "Authenticate to access your secrets", BiometricCryptoManager.getEncryptCipher()) { result ->
+            if (result.cryptoObject?.cipher != null) {
+                isUnlocked = true
             }
-        } catch (_: Exception) {
-            isEnvironmentCompromised = true
-            isUnlocked = false
-        }
-
-        isBiometricAvailable = try {
-            val biometricStatus = BiometricManager.from(this).canAuthenticate(allowedAuthenticators)
-            biometricStatus == BiometricManager.BIOMETRIC_SUCCESS
-        } catch (_: Exception) {
-            false
-        }
-
-        if (!isUnlocked && !isEnvironmentCompromised && isBiometricAvailable) {
-            showBiometricPrompt()
-        }
-
-        clearClipboard()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        isUnlocked = false
-        clearClipboard()
-    }
-
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) {
-            clearClipboard()
         }
     }
 
-    private fun showBiometricPrompt() {
-        if (isEnvironmentCompromised || !isBiometricAvailable || !isIntegrityChecked) return
+    // Public method to be called from Composable
+    fun performBiometricAction(title: String, subtitle: String, cipher: Cipher?, onSucceeded: (BiometricPrompt.AuthenticationResult) -> Unit) {
+        showBiometricPrompt(title, subtitle, cipher, onSucceeded)
+    }
 
-        val cipher = try {
-            BiometricCryptoManager.createCipher()
-        } catch (_: Exception) {
-            isEnvironmentCompromised = true
-            isUnlocked = false
-            return
-        }
-
+    private fun showBiometricPrompt(title: String, subtitle: String, cipher: Cipher?, onSucceeded: (BiometricPrompt.AuthenticationResult) -> Unit) {
         val executor = ContextCompat.getMainExecutor(this)
-        val biometricPrompt = BiometricPrompt(this, executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    if (result.cryptoObject?.cipher != null) {
-                        isUnlocked = true
-                    }
-                }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    isUnlocked = false
-                }
-            })
+        val biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                onSucceeded(result)
+            }
+        })
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("SecureVault Access")
-            .setSubtitle("Authenticate to access your secrets")
+            .setTitle(title)
+            .setSubtitle(subtitle)
             .setAllowedAuthenticators(allowedAuthenticators)
-            .setNegativeButtonText("Cancel")
+            .apply { if ((allowedAuthenticators and BiometricManager.Authenticators.DEVICE_CREDENTIAL) == 0) setNegativeButtonText("Cancel") }
             .build()
 
-        biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+        if (cipher != null) {
+            biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+        } else {
+            biometricPrompt.authenticate(promptInfo)
+        }
     }
 
     private fun clearClipboard() {
@@ -263,333 +152,126 @@ class MainActivity : AppCompatActivity() {
             isClearingClipboard = true
             clipboard.clearPrimaryClip()
         } catch (_: Exception) {
-            try {
-                clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
-            } catch (_: Exception) {
-            }
         } finally {
             isClearingClipboard = false
         }
     }
-}
 
-private object NoTextToolbar : TextToolbar {
-    override val status: TextToolbarStatus = TextToolbarStatus.Hidden
-    override fun showMenu(rect: androidx.compose.ui.geometry.Rect, onCopyRequested: (() -> Unit)?, onPasteRequested: (() -> Unit)?, onCutRequested: (() -> Unit)?, onSelectAllRequested: (() -> Unit)?) {}
-    override fun hide() {}
-}
-
-@Composable
-fun LockedScreen(onAuthenticate: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(Icons.Default.Lock, contentDescription = "Locked", modifier = Modifier.size(100.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Vault is Locked", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(32.dp))
-        Button(onClick = onAuthenticate) { Text("Unlock with Biometrics") }
-    }
-}
-
-@Composable
-fun CompromisedScreen() {
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFB00020)), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("SECURITY ALERT", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("Device Environment Compromised (Root/Debugger/ADB detected).\nAccess Blocked for safety.", color = Color.White, modifier = Modifier.padding(16.dp), textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
-fun IntegrityCheckScreen() {
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF1A237E)), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("INTEGRITY CHECK", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("Verifying device integrity...", color = Color.White, modifier = Modifier.padding(16.dp), textAlign = TextAlign.Center)
-        Spacer(modifier = Modifier.height(12.dp))
-        CircularProgressIndicator(color = Color.White)
-    }
-}
-
-@Composable
-fun BiometricUnavailableScreen() {
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF4E342E)), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("BIOMETRIC REQUIRED", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("No strong biometric is available on this device.\nAccess is blocked in strict mode.", color = Color.White, modifier = Modifier.padding(16.dp), textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
-fun CrashReportScreen(report: String, onDismiss: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF263238)).padding(16.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("DIAGNOSTIC", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(report.take(2000), color = Color.White, textAlign = TextAlign.Start)
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = onDismiss) { Text("Close") }
-    }
+    override fun onResume() { super.onResume(); checkSecurity(); clearClipboard() }
+    override fun onPause() { super.onPause(); isUnlocked = false; clearClipboard() }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VaultHome(vaultManager: VaultManager) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Accounts", "Documents")
-
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(title = { Text("SecureVault") })
-        }
-    ) { padding ->
-        Column(modifier = Modifier.padding(padding)) {
-            PrimaryTabRow(selectedTabIndex = selectedTab) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(title) })
-                }
-            }
-            when (selectedTab) {
-                0 -> AccountsScreen(vaultManager)
-                1 -> DocumentsScreen()
-            }
-        }
-    }
-}
-
-@Composable
-fun AccountsScreen(vaultManager: VaultManager) {
+    val context = LocalActivity.current as MainActivity
     var credentials by remember { mutableStateOf(vaultManager.getAllCredentialTitles()) }
     var showAddDialog by remember { mutableStateOf(false) }
-    var revealedValue by remember { mutableStateOf<String?>(null) }
-    var revealedTitle by remember { mutableStateOf("") }
-    var revealedUsername by remember { mutableStateOf<String?>(null) }
-    var revealedEmail by remember { mutableStateOf<String?>(null) }
+    var revealedCredential by remember { mutableStateOf<VaultManager.Credential?>(null) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            items(credentials) { secretTitle ->
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(secretTitle, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        IconButton(onClick = { 
-                            revealedTitle = secretTitle
-                            val credential = vaultManager.getCredential(secretTitle)
-                            revealedUsername = credential?.username
-                            revealedEmail = credential?.email
-                            revealedValue = credential?.password
-                        }) { Icon(Icons.Default.Visibility, contentDescription = "View") }
-                        IconButton(onClick = {
-                            vaultManager.deleteCredential(secretTitle)
-                            credentials = vaultManager.getAllCredentialTitles()
-                        }) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error) }
+    Scaffold(
+        topBar = { CenterAlignedTopAppBar(title = { Text("SecureVault") }) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showAddDialog = true }) { Icon(Icons.Default.Add, "Add") }
+        }
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                items(credentials) { title ->
+                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(onClick = {
+                                val iv = vaultManager.getIvForCredential(title)
+                                if (iv != null) {
+                                    val cipher = BiometricCryptoManager.getDecryptCipher(iv)
+                                    context.performBiometricAction("View Credential", "Authenticate to reveal password", cipher) { result ->
+                                        revealedCredential = vaultManager.getCredential(title, result.cryptoObject!!.cipher!!)
+                                    }
+                                }
+                            }) { Icon(Icons.Default.Visibility, "View") }
+                            IconButton(onClick = {
+                                context.performBiometricAction("Delete Credential", "Confirm deletion of $title", null) {
+                                    vaultManager.deleteCredential(title)
+                                    credentials = vaultManager.getAllCredentialTitles()
+                                }
+                            }) { Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error) }
+                        }
                     }
                 }
             }
-        }
-        FloatingActionButton(onClick = { showAddDialog = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)) {
-            Icon(Icons.Default.Add, contentDescription = "Add Account")
         }
     }
 
     if (showAddDialog) {
         AddCredentialDialog(
             onDismiss = { showAddDialog = false },
-            onSave = { title, usernameChars, emailChars, passwordChars ->
-                vaultManager.saveCredential(title, usernameChars, emailChars, passwordChars)
-                credentials = vaultManager.getAllCredentialTitles()
-                showAddDialog = false
+            onSave = { title, user, email, pass ->
+                val cipher = BiometricCryptoManager.getEncryptCipher()
+                context.performBiometricAction("Save Credential", "Authorize encryption with biometrics", cipher) { result ->
+                    vaultManager.saveCredential(title, user, email, pass, result.cryptoObject!!.cipher!!)
+                    credentials = vaultManager.getAllCredentialTitles()
+                    showAddDialog = false
+                }
             }
         )
     }
 
-    if (revealedValue != null) {
+    if (revealedCredential != null) {
+        var passwordVisible by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { revealedValue = null },
-            title = { Text(revealedTitle) },
-            text = { Text("Username: $revealedUsername\nEmail: $revealedEmail\nPassword: $revealedValue\n\n(Note: Copy/Paste disabled for security)") },
-            confirmButton = { TextButton(onClick = { revealedValue = null }) { Text("Close") } }
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DocumentsScreen() {
-    val context = LocalContext.current
-    val manager = remember { DocumentManager(context) }
-    var documents by remember { mutableStateOf(manager.listDocuments()) }
-    var pendingExportId by remember { mutableStateOf<String?>(null) }
-    var menuExpandedForId by remember { mutableStateOf<String?>(null) }
-
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val data = result.data
-        val uri = data?.data
-        if (uri != null) {
-            val persistedFlags = buildList {
-                if ((data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
-                    add(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                if ((data.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
-                    add(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                }
-            }.fold(0) { acc, flag -> acc or flag }
-
-            try {
-                if (persistedFlags != 0) {
-                    context.contentResolver.takePersistableUriPermission(uri, persistedFlags)
-                }
-            } catch (_: Exception) {
-            }
-            val doc = DocumentFile.fromSingleUri(context, uri)
-            val name = doc?.name ?: "document"
-            val mime = doc?.type ?: "application/octet-stream"
-            val importResult = manager.importDocument(uri, name, mime)
-            if (importResult.success) {
-                documents = manager.listDocuments()
-                Toast.makeText(context, importResult.message, Toast.LENGTH_LONG).show()
-            } else {
-                val error = manager.getLastError() ?: "Import failed"
-                Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
-        val id = pendingExportId
-        if (uri != null && id != null) {
-            if (manager.exportDocument(id, uri)) {
-                documents = manager.listDocuments()
-                Toast.makeText(context, "Document moved out of the vault", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "Export failed", Toast.LENGTH_SHORT).show()
-            }
-        }
-        pendingExportId = null
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            items(documents) { doc ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
-                ) {
-                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Description, contentDescription = null)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(doc.displayName, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-
-                        Box {
-                            IconButton(onClick = { menuExpandedForId = doc.id }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "Options")
-                            }
-                            DropdownMenu(
-                                expanded = menuExpandedForId == doc.id,
-                                onDismissRequest = { menuExpandedForId = null }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Restore outside vault") },
-                                    leadingIcon = { Icon(Icons.Default.FileDownload, null) },
-                                    onClick = {
-                                        menuExpandedForId = null
-                                        val exported = manager.exportDocumentToOriginal(doc.id)
-                                        if (!exported) {
-                                            pendingExportId = doc.id
-                                            exportLauncher.launch(doc.displayName)
-                                        } else {
-                                            documents = manager.listDocuments()
-                                            Toast.makeText(context, "Document restored to its original location", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Delete") },
-                                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        menuExpandedForId = null
-                                        manager.deleteDocument(doc.id)
-                                        documents = manager.listDocuments()
-                                    }
-                                )
-                            }
+            onDismissRequest = { revealedCredential = null },
+            title = { Text(revealedCredential!!.title) },
+            text = {
+                Column {
+                    Text("User: ${revealedCredential!!.username}")
+                    Text("Email: ${revealedCredential!!.email}")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Pass: ")
+                        Text(
+                            text = if (passwordVisible) revealedCredential!!.password else "••••••••",
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(
+                                if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = "Toggle Visibility"
+                            )
                         }
                     }
                 }
-            }
-        }
-        FloatingActionButton(
-            onClick = {
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                    addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-                }
-                importLauncher.launch(intent)
             },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
-        ) {
-            Icon(Icons.Default.Add, contentDescription = "Import Document")
-        }
+            confirmButton = { TextButton(onClick = { revealedCredential = null }) { Text("Close") } }
+        )
     }
 }
 
 @Composable
 fun AddCredentialDialog(onDismiss: () -> Unit, onSave: (String, CharArray, CharArray, CharArray) -> Unit) {
     var title by remember { mutableStateOf("") }
-    var username by remember { mutableStateOf("") }
+    var user by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var pass by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New Credential") },
+        title = { Text("New Account") },
         text = {
             Column {
+                SecureOutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") })
+                SecureOutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Username") })
+                SecureOutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email") }, keyboardType = KeyboardType.Email)
                 SecureOutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("* Title") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                SecureOutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("Username") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                SecureOutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Email") },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardType = KeyboardType.Email
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                SecureOutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("* Password") },
-                    modifier = Modifier.fillMaxWidth(),
-                    isSecret = true,
+                    value = pass, 
+                    onValueChange = { pass = it }, 
+                    label = { Text("Password") }, 
+                    isSecret = true, 
                     keyboardType = KeyboardType.Password
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = { password = PasswordGenerator.generate(16) }, modifier = Modifier.fillMaxWidth()) { Text("Generate Strong Password") }
+                Button(onClick = { pass = PasswordGenerator.generate() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Generate") }
             }
         },
-        confirmButton = {
-            Button(onClick = {
-                if (title.isNotBlank() && password.isNotBlank()) {
-                    onSave(title, username.toCharArray(), email.toCharArray(), password.toCharArray())
-                    title = ""
-                    username = ""
-                    email = ""
-                    password = ""
-                }
-            }) { Text("Save") }
-        },
+        confirmButton = { Button(onClick = { onSave(title, user.toCharArray(), email.toCharArray(), pass.toCharArray()) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
@@ -605,35 +287,52 @@ fun SecureOutlinedTextField(
 ) {
     val context = LocalContext.current
     val clipboard = context.getSystemService<ClipboardManager>()
-    OutlinedTextField(
-        value = value,
-        onValueChange = {
-            // Reject multi-character inserts to block paste events from keyboards and IMEs.
-            if (it.length - value.length > 1) return@OutlinedTextField
-            try {
-                clipboard?.setPrimaryClip(ClipData.newPlainText("", ""))
-            } catch (_: Exception) {
-            }
-            onValueChange(it)
-        },
-        label = label,
-        modifier = modifier.onFocusChanged {
-            if (it.isFocused) {
-                try {
-                    clipboard?.setPrimaryClip(ClipData.newPlainText("", ""))
-                } catch (_: Exception) {
-                }
-            }
-        },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(
-            autoCorrectEnabled = false,
-            keyboardType = keyboardType
-        ),
-        visualTransformation = if (isSecret) {
-            PasswordVisualTransformation()
-        } else {
-            VisualTransformation.None
+    var passwordVisible by remember { mutableStateOf(false) }
+
+    // Context menu disabled (copy/paste/cut)
+    CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalTextToolbar provides object : androidx.compose.ui.platform.TextToolbar {
+            override fun hide() {}
+            override fun showMenu(rect: androidx.compose.ui.geometry.Rect, onCopyRequested: (() -> Unit)?, onPasteRequested: (() -> Unit)?, onCutRequested: (() -> Unit)?, onSelectAllRequested: (() -> Unit)?) {}
+            override val status: androidx.compose.ui.platform.TextToolbarStatus = androidx.compose.ui.platform.TextToolbarStatus.Hidden
         }
-    )
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {
+                // Blocks massive text pasting
+                if (it.length - value.length > 1) return@OutlinedTextField
+                onValueChange(it)
+            },
+            label = label,
+            modifier = modifier.onFocusChanged {
+                if (it.isFocused) {
+                    try { clipboard?.setPrimaryClip(ClipData.newPlainText("", "")) } catch (_: Exception) {}
+                }
+            },
+            singleLine = true,
+            trailingIcon = if (isSecret) {
+                {
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = "Toggle Visibility"
+                        )
+                    }
+                }
+            } else null,
+            keyboardOptions = KeyboardOptions(
+                autoCorrectEnabled = false,
+                keyboardType = keyboardType,
+                imeAction = androidx.compose.ui.text.input.ImeAction.Default
+            ),
+            visualTransformation = if (isSecret && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None
+        )
+    }
 }
+
+@Composable fun LockedScreen(onAuthenticate: () -> Unit) { Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Lock, null, modifier = Modifier.size(100.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(24.dp)); Text("Vault Locked", fontSize = 24.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(32.dp)); Button(onClick = onAuthenticate) { Text("Unlock") } } }
+@Composable fun CompromisedScreen() { Column(modifier = Modifier.fillMaxSize().background(Color(0xFFB00020)), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) { Text("SECURITY ALERT", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold); Text("Device Compromised.", color = Color.White) } }
+@Composable fun IntegrityCheckScreen() { Column(modifier = Modifier.fillMaxSize().background(Color(0xFF1A237E)), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) { Text("Checking Integrity...", color = Color.White); CircularProgressIndicator(color = Color.White) } }
+@Composable fun BiometricUnavailableScreen() { Column(modifier = Modifier.fillMaxSize().background(Color(0xFF4E342E)), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) { Text("Biometrics Required.", color = Color.White) } }
+@Composable fun CrashReportScreen(report: String, onDismiss: () -> Unit) { Column(modifier = Modifier.fillMaxSize().background(Color(0xFF263238)).padding(16.dp)) { Text("Diagnostic", color = Color.White, fontSize = 24.sp); Text(report.take(1000), color = Color.White); Button(onClick = onDismiss) { Text("Close") } } }

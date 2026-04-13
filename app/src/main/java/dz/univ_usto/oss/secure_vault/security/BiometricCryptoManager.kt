@@ -6,16 +6,23 @@ import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 object BiometricCryptoManager {
     private const val KEY_ALIAS = "secure_vault_biometric_key"
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"
 
-    fun createCipher(): Cipher {
+    fun getEncryptCipher(): Cipher {
         val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
-        val key = getOrCreateSecretKey()
-        cipher.init(Cipher.ENCRYPT_MODE, key)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+        return cipher
+    }
+
+    fun getDecryptCipher(iv: ByteArray): Cipher {
+        val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+        val spec = GCMParameterSpec(128, iv)
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), spec)
         return cipher
     }
 
@@ -33,10 +40,8 @@ object BiometricCryptoManager {
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
             .setUserAuthenticationRequired(true)
-            .setUserAuthenticationParameters(
-                0,
-                KeyProperties.AUTH_BIOMETRIC_STRONG
-            )
+            // Allow biometric OR device credential (PIN/Pattern/Password)
+            .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
             .setInvalidatedByBiometricEnrollment(true)
             .build()
 

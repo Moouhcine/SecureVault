@@ -7,8 +7,6 @@ import java.security.SecureRandom
 
 object IntegrityChecker {
     fun isIntegrityEnforced(context: Context): Boolean {
-        return false // Temporarily disabled for testing
-        /*
         val hasInternet = context.checkSelfPermission(android.Manifest.permission.INTERNET) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
         if (!hasInternet) return false
@@ -18,7 +16,6 @@ object IntegrityChecker {
         } catch (_: Exception) {
             false
         }
-        */
     }
 
     fun requestIntegrityToken(

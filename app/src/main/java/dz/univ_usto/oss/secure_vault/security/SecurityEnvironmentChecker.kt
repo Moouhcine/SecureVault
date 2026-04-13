@@ -9,8 +9,6 @@ import java.io.File
 
 object SecurityEnvironmentChecker {
 
-    private const val DIAGNOSTICS_BYPASS_ALL_CHECKS = true
-
     /**
      * Checks if the device is rooted by looking for common binaries and APKs.
      */
@@ -131,8 +129,6 @@ object SecurityEnvironmentChecker {
      * Overall security check. Returns true if the environment is safe.
      */
     fun isEnvironmentSafe(context: Context): Boolean {
-        if (DIAGNOSTICS_BYPASS_ALL_CHECKS) return true
-         // For the "Paranoid" requirement: No root, no debugger, and no ADB enabled.
          return !isDeviceRooted() &&
              !isDebuggerConnected() &&
              (!isAdbEnabled(context)) &&
