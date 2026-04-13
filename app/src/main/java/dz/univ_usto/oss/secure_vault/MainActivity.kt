@@ -224,8 +224,12 @@ fun VaultHome(vaultManager: VaultManager) {
             title = { Text(revealedCredential!!.title) },
             text = {
                 Column {
-                    Text("User: ${revealedCredential!!.username}")
-                    Text("Email: ${revealedCredential!!.email}")
+                    if (revealedCredential!!.username.isNotEmpty()) {
+                        Text("User: ${revealedCredential!!.username}")
+                    }
+                    if (revealedCredential!!.email.isNotEmpty()) {
+                        Text("Email: ${revealedCredential!!.email}")
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Pass: ")
                         Text(
@@ -252,26 +256,49 @@ fun AddCredentialDialog(onDismiss: () -> Unit, onSave: (String, CharArray, CharA
     var user by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
+    
+    val isFormValid = title.isNotBlank() && pass.isNotBlank()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("New Account") },
         text = {
-            Column {
-                SecureOutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") })
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SecureOutlinedTextField(
+                    value = title, 
+                    onValueChange = { title = it }, 
+                    label = { Text("Title *") },
+                    isError = title.isBlank()
+                )
                 SecureOutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Username") })
                 SecureOutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email") }, keyboardType = KeyboardType.Email)
                 SecureOutlinedTextField(
                     value = pass, 
                     onValueChange = { pass = it }, 
-                    label = { Text("Password") }, 
+                    label = { Text("Password *") }, 
                     isSecret = true, 
-                    keyboardType = KeyboardType.Password
+                    keyboardType = KeyboardType.Password,
+                    isError = pass.isBlank()
                 )
-                Button(onClick = { pass = PasswordGenerator.generate() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Generate") }
+                Button(
+                    onClick = { pass = PasswordGenerator.generate() }, 
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                ) { 
+                    Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Generate Secure Password") 
+                }
             }
         },
-        confirmButton = { Button(onClick = { onSave(title, user.toCharArray(), email.toCharArray(), pass.toCharArray()) }) { Text("Save") } },
+        confirmButton = { 
+            Button(
+                onClick = { onSave(title, user.toCharArray(), email.toCharArray(), pass.toCharArray()) },
+                enabled = isFormValid
+            ) { 
+                Text("Save") 
+            } 
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
@@ -283,6 +310,7 @@ fun SecureOutlinedTextField(
     label: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     isSecret: Boolean = false,
+    isError: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text
 ) {
     val context = LocalContext.current
@@ -305,11 +333,14 @@ fun SecureOutlinedTextField(
                 onValueChange(it)
             },
             label = label,
-            modifier = modifier.onFocusChanged {
-                if (it.isFocused) {
-                    try { clipboard?.setPrimaryClip(ClipData.newPlainText("", "")) } catch (_: Exception) {}
-                }
-            },
+            isError = isError,
+            modifier = modifier
+                .fillMaxWidth()
+                .onFocusChanged {
+                    if (it.isFocused) {
+                        try { clipboard?.setPrimaryClip(ClipData.newPlainText("", "")) } catch (_: Exception) {}
+                    }
+                },
             singleLine = true,
             trailingIcon = if (isSecret) {
                 {
@@ -326,7 +357,8 @@ fun SecureOutlinedTextField(
                 keyboardType = keyboardType,
                 imeAction = androidx.compose.ui.text.input.ImeAction.Default
             ),
-            visualTransformation = if (isSecret && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None
+            visualTransformation = if (isSecret && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
+            shape = MaterialTheme.shapes.medium
         )
     }
 }
