@@ -8,7 +8,7 @@ import android.provider.Settings
 import java.io.File
 
 object SecurityEnvironmentChecker {
-
+    const val SECURITY_BYPASS = false 
     /**
      * Checks if the device is rooted by looking for common binaries and APKs.
      */
@@ -129,6 +129,7 @@ object SecurityEnvironmentChecker {
      * Overall security check. Returns true if the environment is safe.
      */
     fun isEnvironmentSafe(context: Context): Boolean {
+        if (SECURITY_BYPASS) return true
          return !isDeviceRooted() &&
              !isDebuggerConnected() &&
              (!isAdbEnabled(context)) &&
