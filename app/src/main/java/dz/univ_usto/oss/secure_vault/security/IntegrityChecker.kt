@@ -6,6 +6,8 @@ import com.google.android.play.core.integrity.IntegrityManagerFactory
 import java.security.SecureRandom
 
 object IntegrityChecker {
+    const val SECURITY_BYPASS = false 
+    
     fun isIntegrityEnforced(context: Context): Boolean {
         val hasInternet = context.checkSelfPermission(android.Manifest.permission.INTERNET) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -23,6 +25,10 @@ object IntegrityChecker {
         onSuccess: () -> Unit,
         onFailure: (Throwable) -> Unit
     ) {
+        if (SECURITY_BYPASS) {
+            onSuccess()
+            return
+        }
         try {
             val integrityManager = IntegrityManagerFactory.create(context)
             val request = com.google.android.play.core.integrity.IntegrityTokenRequest.builder()
